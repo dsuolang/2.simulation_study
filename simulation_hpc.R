@@ -4,19 +4,19 @@
 #  Amount of shared auxiliary variables
 #  Model misspecification. 
 #  Modeling approach 
-#  Total scenarios = 2 * 3 * 3 * 2 * 2 = 72
-#  Last updated 10/23/2024
+#  Total scenarios = 36(2 * 3 * 3 * 2) * + 18(2 * 3 * 3 * 1) = 54
+#  Last updated 12/3/2024
 
 ############################################
 #--------SRMI--------#
 #work_dir <- "/Users/dsuolang/Downloads/study2/srmi" # CHANGE TEST
-work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/srmi"
+work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/test/srmi"
 ############################################
 
 ############################################
 #--------PMM--------#
 #work_dir <- "/Users/dsuolang/Downloads/study2/pmm" # CHANGE TEST
-#work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/pmm"
+#work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/test/pmm"
 ############################################
 setwd(work_dir)
 
@@ -42,20 +42,18 @@ library(magrittr)
 library(mice)
 library(caret) 
 library(pscl)
+library(clustMixType)
 library(pROC)
 options(scipen = 999)
 
 #source("/Users/dsuolang/Downloads/study2/functions.R")
-source("/nfs/turbo/isr-bwest1/dsuolang/study2/functions.R") # CHANGE TEST
+source("/nfs/turbo/isr-bwest1/dsuolang/study2/test/functions.R") # CHANGE TEST
 
 
 
 #--------Draw samples from a synthetic population--------#
 ############################################
-synthpop <- read_dta("/nfs/turbo/isr-bwest1/dsuolang/study2/synthpop.dta") # CHANGE TEST
-#synthpop <- read_dta("testdata.dta")
-summary(sqrt(synthpop$mvpa_total_acc))
-synthpop$mvpa_total_acc <- synthpop$modpa_total_acc + synthpop$vigpa_total_acc
+synthpop <- read_dta("/home/dsuolang/synthpop_sim1.dta") # CHANGE TEST
 synthpop[c("mvpa_total_acc_sqrt", "modpa_total_sqrt", "vigpa_total_sqrt")] <-
   sqrt(synthpop[c("mvpa_total_acc", "modpa_total", "vigpa_total")])
 
@@ -75,7 +73,6 @@ synthpop <- synthpop %>% mutate(
 summary(synthpop$mvpa_total_acc) # Variable of interest 1: MVPA duration
 table(synthpop$activity_pattern)/nrow(synthpop)# Variable of interest 2: activity pattern
 
-# creating pseudo variable
 synthpop$activity_pattern <- as.factor(synthpop$activity_pattern)
 
 synthpop <- synthpop %>%
@@ -126,8 +123,8 @@ synthpop$health_literacy<- cut(probabilities, breaks = quantile(probabilities, p
 
 #assocstats(table(synthpop$fitness_access, synthpop$health_literacy))$cramer
 
-variables <- c("cluster", "seqn",
-               "modpa_total", "vigpa_total", "mvpa_total_acc", "modpa_total_sqrt", "vigpa_total_sqrt", "mvpa_total_acc_sqrt",
+variables <- c("seqn", "modpa_total_sqrt", "vigpa_total_sqrt", 
+               "modpa_total", "vigpa_total", "mvpa_total_acc", "mvpa_total_acc_sqrt",
                "activity_pattern", "source", "srvy_yr",
                "age", "race","gender", "marital", "edu","poverty","work","insurance",
                "self_reported_health","bmi", "smoker", "alcohol_cat",
@@ -136,9 +133,20 @@ variables <- c("cluster", "seqn",
 synthpop<- synthpop %>%
   select(all_of(variables))
 
+synthpop<-perform_kproto_clustering(synthpop, 5)
+
+synthpop$modpa_indicator<-ifelse(synthpop$modpa_total==0, 0, 1)
+synthpop$vigpa_indicator<-ifelse(synthpop$vigpa_total==0, 0, 1)
+
+write.dta(synthpop, "/nfs/turbo/isr-bwest1/dsuolang/study2/test/synthpop.dta")
+
+
+
+synthpop<-read_dta("/nfs/turbo/isr-bwest1/dsuolang/study2/test/synthpop.dta")
+colnames(synthpop)
 set.seed(2024)
 n_samples <- 10000
-n_datasets <- 100
+n_datasets <- 250
 #n_datasets <- 10 # CHANGE TEST
 
 sampled_datasets <- vector("list", n_datasets)
@@ -153,35 +161,41 @@ length(sampled_datasets)
 
 #--------Evaluate R-squared values with varying predictors--------#
 ############################################
-# model1 <- list(
-#   lm(mvpa_total_acc_sqrt ~ modpa_total_sqrt + vigpa_total_sqrt + activity_pattern + source + srvy_yr +
-#        age + race + gender + marital, data = synthpop),
-#   multinom(activity_pattern ~ modpa_total_sqrt + vigpa_total_sqrt + mvpa_total_acc_sqrt + source + srvy_yr +
-#              age + race + gender + marital, data = synthpop))
-# print(paste("Adjusted R-squared for linear model1:",summary(model1[[1]])$adj.r.squared))
-# print(paste("McFadden's pseudo-R-squared for multinomial model1:",  pR2(model1[[2]])["r2ML"]))
-# 
-# model2 <- list(
-#   lm(mvpa_total_acc_sqrt ~ modpa_total_sqrt + vigpa_total_sqrt + activity_pattern + source + srvy_yr +
-#        age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = synthpop),
-#   multinom(activity_pattern ~ modpa_total_sqrt + vigpa_total_sqrt + mvpa_total_acc_sqrt + source + srvy_yr +
-#              age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = synthpop)
-# )
-# 
-# print(paste("Adjusted R-squared for linear model2:",summary(model2[[1]])$r.squared))
-# print(paste("McFadden's pseudo-R-squared for multinomial model2:",  pR2(model2[[2]])["r2ML"]))
-# 
-# model3 <- list(
-#   lm(mvpa_total_acc_sqrt ~ modpa_total_sqrt + vigpa_total_sqrt + activity_pattern + source + srvy_yr +
-#        age + race + gender + marital + edu + poverty + work + insurance +
-#        self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
-#        fitness_access + health_literacy, data = synthpop),
-#   multinom(activity_pattern ~ modpa_total_sqrt + vigpa_total_sqrt + mvpa_total_acc_sqrt + source + srvy_yr +
-#              age + race + gender + marital + edu + poverty + work + insurance +
-#              self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
-#              fitness_access + health_literacy, data = synthpop))
-# print(paste("Adjusted R-squared for linear model3:",summary(model3[[1]])$r.squared))
-# print(paste("McFadden's pseudo-R-squared for multinomial model3:",  pR2(model3[[2]])["r2ML"]))
+model1 <- list(
+  lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+       source + srvy_yr +
+       age + race + gender + marital, data = synthpop),
+  multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+             source + srvy_yr +
+             age + race + gender + marital, data = synthpop))
+print(paste("Adjusted R-squared for linear model1:",summary(model1[[1]])$adj.r.squared))
+print(paste("McFadden's pseudo-R-squared for multinomial model1:",  pR2(model1[[2]])["r2ML"]))
+
+model2 <- list(
+  lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator +  activity_pattern + 
+       source + srvy_yr +
+       age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = synthpop),
+  multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+             source + srvy_yr +
+             age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = synthpop)
+)
+
+print(paste("Adjusted R-squared for linear model2:",summary(model2[[1]])$r.squared))
+print(paste("McFadden's pseudo-R-squared for multinomial model2:",  pR2(model2[[2]])["r2ML"]))
+
+model3 <- list(
+  lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+       source + srvy_yr +
+       age + race + gender + marital + edu + poverty + work + insurance +
+       self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+       fitness_access + health_literacy, data = synthpop),
+  multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + mvpa_total_acc_sqrt + 
+             source + srvy_yr +
+             age + race + gender + marital + edu + poverty + work + insurance +
+             self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+             fitness_access + health_literacy, data = synthpop))
+print(paste("Adjusted R-squared for linear model3:",summary(model3[[1]])$r.squared))
+print(paste("McFadden's pseudo-R-squared for multinomial model3:",  pR2(model3[[2]])["r2ML"]))
 
 # library(lmtest)
 # library(car)
@@ -204,11 +218,11 @@ length(sampled_datasets)
 
 #--------Introduce missing data--------#
 ############################################
-exclude_vars <- c("modpa_total", "vigpa_total", "mvpa_total_acc", "cluster", "seqn")
+#exclude_vars <- c("modpa_total", "vigpa_total", "mvpa_total_acc", "seqn")
 target_vars <- c("mvpa_total_acc_sqrt", "mvpa_total_acc", "activity_pattern")
-predictor_vars_mar <- c("srvy_yr", "age", "race", "gender", "marital",
-                        "modpa_total", "vigpa_total", "edu", 
-                        "poverty", "work", "insurance", "self_reported_health", "bmi", "smoker", "alcohol_cat", 
+predictor_vars_mar <- c("srvy_yr", "age", "race", "gender", "marital", "cluster",
+                        "modpa_total", "vigpa_total", "modpa_indicator", "vigpa_indicator", 
+                        "edu", "poverty", "work", "insurance", "self_reported_health", "bmi", "smoker", "alcohol_cat", 
                         "hypertension", "diabetes", "heartdiseases", "cancers", "stroke", 
                         "fitness_access", "health_literacy")
 predictor_vars_mnar <- c("srvy_yr","age", "race", "gender", "marital",
@@ -216,6 +230,8 @@ predictor_vars_mnar <- c("srvy_yr","age", "race", "gender", "marital",
 
 percents <- c(50, 70, 90)
 mech <- c("mar", "mnar")
+#percents <- c(50) # change test
+#mech <- c("mar")
 
 # Initialize an empty list to store simulated data
 simdata_miss_50mar_list <- list()
@@ -252,7 +268,8 @@ for (percent in percents) {
 
 
 
-rm(synthpop, probabilities, z1, z2)
+#rm(synthpop, probabilities, z1, z2)
+rm(synthpop)
 gc()
 ############################################
 ############################################
@@ -267,27 +284,27 @@ source_files <- list("1_srmi_level1_spec1.set", "2_srmi_level2_spec1.set", "3_sr
                      "4_srmi_level1_spec2.set", "5_srmi_level2_spec2.set", "6_srmi_level3_spec2.set")
 # Function to perform imputation within each dataset's subgroups
 
-num_cores <- detectCores()  
+num_cores <- detectCores()
 cl <- makeCluster(num_cores)
 registerDoParallel(cl)
-
-# Define the parameters
+#
+# # Define the parameters
 missing_patterns <- c("50mar", "50mnar", "70mar", "70mnar", "90mar", "90mnar")
 data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list",
                       "simdata_miss_70mar_list", "simdata_miss_70mnar_list",
                       "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
 
-for (i in seq_along(missing_patterns)) {  
-  data_list <- get(data_lists_names[i])  
+for (i in seq_along(missing_patterns)) {   # change test
+  data_list <- get(data_lists_names[i])
   process_simulation_data_parallel(paste0("miss_", missing_patterns[i]), data_list)
   gc()  # Call garbage collector to free up memory
-}
+  }
 
 # Combine RDA files in parallel
 for (pattern in missing_patterns) {
   combine_rda_files_parallel(file.path(work_dir, paste0("miss_", pattern)))
 }
-
+print("Imputation finished")
 stopCluster(cl)
 ############################################
 ############################################
@@ -295,13 +312,14 @@ stopCluster(cl)
 
 
 ############################################
+#############################################
 ############################################
 #--------PMM imputation--------#
 ############################################
 ############################################
 # source_files <- list("1_pmm_level1_spec1.R", "2_pmm_level2_spec1.R", "3_pmm_level3_spec1.R",
 #                      "4_pmm_level1_spec2.R", "5_pmm_level2_spec2.R", "6_pmm_level3_spec2.R")
-# num_cores <- detectCores() 
+# num_cores <- detectCores()
 # cl <- makeCluster(num_cores)
 # registerDoParallel(cl)
 # 
@@ -313,21 +331,21 @@ stopCluster(cl)
 #                    "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
 # 
 # # Loop through each dataset name, using get() to access the dataset directly
-# for (i in seq_along(missing_patterns)) {  
-#   data_list <- get(data_lists_names[i])  
+# for (i in seq_along(missing_patterns)) { 
+#   data_list <- get(data_lists_names[i])
 #   process_simulation_data_parallel_r(paste0("miss_", missing_patterns[i]), data_list)
 #   gc()  # Call garbage collector to free up memory
 # }
 # for (pattern in missing_patterns) {
+#   print(pattern)
 #   combine_rda_files_parallel_r(file.path(work_dir, paste0("miss_", pattern)))
 #   }
-# 
 # stopCluster(cl)
 
 ############################################
 ############################################
 
-
+gc()
 
 #-------- Combine Estimates --------#
 ############################################
@@ -349,9 +367,9 @@ result_sheet_eachrun <- data.frame(
 )
 
 variable1 <- "mvpa_total_acc"
-benchmark <- 221.7086
+benchmark <- 209.2866
 variable2 <- "activity_pattern"
-benchmarks <- c(0.1124, 0.4469, 0.3254, 0.1153)
+benchmarks <- c(0.1014771, 0.4302855, 0.3392789, 0.1289586)
 
 # Call the process_folders functions
 process_folders_continuous(work_dir, variable1, benchmark)

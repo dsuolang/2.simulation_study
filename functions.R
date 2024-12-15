@@ -39,28 +39,6 @@ sim_miss <- function(data, vars, miss_perc) {
   return(data)
 }
 
-# introduce_missingness <- function(df, cols_to_make_missing, predictors, missing_rate) {
-#   # Create a logistic regression model to calculate the probability of missingness
-#   formula <- as.formula(paste0("rbinom(nrow(df), 1, missing_rate) ~ ", paste(predictors, collapse = " + ")))
-#   logit_model <- glm(formula, data = df, family = binomial)
-#   df$prob_missing <- predict(logit_model, type = "response")
-#   
-#   # Ensure reproducibility
-#   set.seed(2024)
-#   # Generate a uniform random variable and decide missingness based on probability
-#   u_random <- runif(nrow(df))
-#   df$miss_indicator <- u_random < df$prob_missing #T = missing, F = not missing
-#   
-#   # Apply the missing mask to both columns
-#   for (col in cols_to_make_missing) {
-#     df[[col]] <- ifelse(df$miss_indicator, NA, df[[col]])
-#   }
-#   
-#   # Clean up and return the data frame
-#   df <- df %>% select(-prob_missing)
-#   return(df)
-# }
-
 introduce_missingness <- function(df, cols_to_make_missing, predictors, missing_rate) {
   # Include the source variable as the outcome.
   formula <- as.formula(paste("source", "~", paste(predictors, collapse = " + ")))
@@ -73,6 +51,7 @@ introduce_missingness <- function(df, cols_to_make_missing, predictors, missing_
   
   # Adjust the predicted probabilities to meet the desired overall missing rate.
   df$adjusted_prob_missing <- df$prob_missing * (missing_rate / mean(df$prob_missing))
+  df$adjusted_prob_missing <- pmin(pmax(df$adjusted_prob_missing, 0), 1)
   
   # Ensure reproducibility
   set.seed(2024)
@@ -350,7 +329,7 @@ rubin_combining_rule_categorical <- function(variable, benchmarks, scenario) {
     relative_bias <- bias/benchmarks[[i]]
     
     df <- (m-1)/lambda^2
-    t_value <- qt(0.975, df)
+    t_value <- qt(0.95, df)
     cr <- as.numeric((benchmarks[[i]] >= estimate_mi- t_value * sqrt(mi_vt)) & (benchmarks[[i]] <= estimate_mi + t_value * sqrt(mi_vt)))
     
     # Append results to result_sheet
@@ -522,7 +501,7 @@ process_simulation_data_parallel_r <- function(miss_type, simdata_list) {
   # Parallelize the loops
   tryCatch({
     foreach(i = seq_along(simdata_list), .packages = c('foreach', 'readr', 'mice', "dplyr")) %:% 
-      foreach(j = seq_along(source_files), .packages = c('foreach','readr', 'mice', "dplyr")) %dopar% {
+      foreach(j = 4:6, .packages = c('foreach','readr', 'mice', "dplyr")) %dopar% {
         # Create a local directory for each task
         task_dir <- paste0(miss_dir, "/run_", i, "_levelspec_", j)
         dir.create(task_dir, recursive = TRUE, showWarnings = FALSE)
@@ -639,4 +618,28 @@ logreg_for_subfolder <- function(subfolder) {
     mean_auc = mean_auc,
     mean_R_squared = mean_R_squared
   ))
+}
+
+
+
+perform_kproto_clustering <- function(df, k) {
+  # Step 1: Select and convert categorical variables to dummy variables
+  categorical_vars <- df[, c("race", "edu", "marital", "poverty", "smoker", "alcohol_cat", "self_reported_health",
+                             "fitness_access", "health_literacy")]
+  dummy_vars1 <- as.data.frame(model.matrix(~ . - 1, data = categorical_vars)) %>%
+    mutate(across(everything(), as.factor))
+  # Step 2: Select and convert additional categorical variables to factors
+  dummy_vars2 <- df[, c("hypertension", "heartdiseases", "stroke", "cancers", "diabetes", 
+                        "gender", "work", "insurance", "srvy_yr", "source")] %>%
+    mutate(across(everything(), as.factor))
+  # Step 3: Scale continuous variables
+  continuous_vars <- scale(df[, c("age", "bmi", "modpa_total", "vigpa_total")])
+  # Step 4: Combine all variables into one data frame
+  combined_data <- cbind(dummy_vars1, dummy_vars2, continuous_vars)
+  # Step 5: Perform k-prototypes clustering
+  kmode <- kproto(combined_data, k)
+  # Step 6: Add the cluster assignments back to the original data frame
+  df$cluster <- kmode$cluster
+  
+  return(df)
 }
