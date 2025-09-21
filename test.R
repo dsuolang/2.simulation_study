@@ -9,15 +9,15 @@
 
 ############################################
 #--------SRMI--------#
-#work_dir <- "/Users/dsuolang/Downloads/study2/srmi" # CHANGE TEST
-work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/srmi"
+work_dir <- "/Users/dsuolang/Desktop/Study2" # CHANGE TEST
+#work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/srmi"
 ############################################
 
 
 ############################################
 #--------PMM--------#
 #work_dir <- "/Users/dsuolang/Downloads/study2/pmm" # CHANGE TEST
-work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/pmm"
+#work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/pmm"
 ############################################
 
 
@@ -32,10 +32,9 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(tidyverse)
-library(devtools)
+#library(devtools)
 library(foreign)
 library(nnet)
-library(mice)
 library(pscl)
 library(doParallel)
 library(readr)
@@ -43,14 +42,15 @@ library(stringr)
 library(fastDummies)
 library(vcd)
 library(magrittr)
+library(mice)
 library(caret) 
 library(pscl)
 library(clustMixType)
 library(pROC)
 options(scipen = 999)
 
-#source("/Users/dsuolang/Downloads/study2/functions.R")
-source("/nfs/turbo/isr-bwest1/dsuolang/study2/functions.R") # CHANGE TEST
+source("/Users/dsuolang/Desktop/2.simulation_study/functions.R")
+#source("/nfs/turbo/isr-bwest1/dsuolang/study2/functions_beta.R") # CHANGE TEST
 
 
 
@@ -147,7 +147,8 @@ write.dta(synthpop, "/nfs/turbo/isr-bwest1/dsuolang/study2/synthpop.dta")
 
 
 
-synthpop<-read_dta("/nfs/turbo/isr-bwest1/dsuolang/study2/synthpop.dta")
+#synthpop<-read_dta("/nfs/turbo/isr-bwest1/dsuolang/study2/synthpop.dta")
+synthpop<-read_dta("/Users/dsuolang/Desktop/Study2/Data/synthpop.dta")
 colnames(synthpop)
 set.seed(2024)
 n_samples <- 10000
@@ -163,14 +164,14 @@ names(sampled_datasets) <- paste0("dataset_", 1:n_datasets)
 length(sampled_datasets)
 
 # check normality of complete data distribution
-means<-sapply(sampled_datasets, function(dataset) {
-  sum(dataset$activity_pattern == 1, na.rm=T)/nrow(dataset)
-})
-
-hist(means)
-qqnorm(means)
-qqline(means, col='red')
-shapiro.test(means)
+# means<-sapply(sampled_datasets, function(dataset) {
+#   sum(dataset$activity_pattern == 1, na.rm=T)/nrow(dataset)
+# })
+# 
+# hist(means)
+# qqnorm(means)
+# qqline(means, col='red')
+# shapiro.test(means)
 #save.image(file = file.path(work_dir, ".RData"))
 
 #--------Evaluate R-squared values with varying predictors--------#
@@ -231,6 +232,55 @@ print(paste("McFadden's pseudo-R-squared for multinomial model3:",  pR2(model3[[
 # Initialize an empty list to store results
 # Load the necessary library
 
+# Define the function to apply to each dataset
+process_model <- function(dataset) {
+  # Define the models
+  model1 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital, data = dataset)
+  )
+  
+  model2 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset)
+  )
+  
+  model3 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance +
+         self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+         fitness_access + health_literacy, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance +
+               self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+               fitness_access + health_literacy, data = dataset)
+  )
+  
+  # Collect the results for each model
+  model_results <- data.frame(
+    model = rep(1:3, each = 2),  # 1, 2, and 3 for each model
+    variable = rep(c("mvpa_total_acc_sqrt", "activity_pattern"), 3),
+    rsquared = c(
+      summary(model1[[1]])$adj.r.squared, pR2(model1[[2]])["r2ML"],
+      summary(model2[[1]])$r.squared, pR2(model2[[2]])["r2ML"],
+      summary(model3[[1]])$r.squared, pR2(model3[[2]])["r2ML"]
+    ),
+    dataset_id = rep(deparse(substitute(dataset)), 6)  # Add dataset name to identify it
+  )
+  
+  return(model_results)
+}
+
 
 model_results_list <- lapply(sampled_datasets, process_model)
 rsquared_results <- do.call(rbind, model_results_list)
@@ -285,7 +335,7 @@ for (percent in percents) {
       
       # Simulate data using the specified percent and predictor variables
       simdata <- introduce_missingness(sampled_dataset, target_vars, predictor_vars, percent/100)
-      
+      mean(is.na(simdata$mvpa_total_acc)) 
       # Construct the list name based on the percentage and mechanism
       list_name <- paste0("simdata_miss_", percent, m, "_list")
       
@@ -294,7 +344,6 @@ for (percent in percents) {
     }
   }
 }
-
 
 
 #rm(synthpop, probabilities, z1, z2)
@@ -318,14 +367,10 @@ cl <- makeCluster(num_cores)
 registerDoParallel(cl)
 #
 # # Define the parameters
-missing_patterns <- c("50mar"#, "50mnar", "70mar", "70mnar", "90mar", "90mnar"
-                      )
-
-data_lists_names <- c("simdata_miss_50mar_list"
-                      #, "simdata_miss_50mnar_list",
-                      #"simdata_miss_70mar_list", "simdata_miss_70mnar_list",
-                      #"simdata_miss_90mar_list", "simdata_miss_90mnar_list"
-                      )
+missing_patterns <- c("50mar", "50mnar", "70mar", "70mnar", "90mar", "90mnar")
+data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list",
+                      "simdata_miss_70mar_list", "simdata_miss_70mnar_list",
+                      "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
 
 for (i in seq_along(missing_patterns)) {   # change test
   data_list <- get(data_lists_names[i])
@@ -350,32 +395,30 @@ stopCluster(cl)
 #--------PMM imputation--------#
 ############################################
 ############################################
-source_files <- list("1_pmm_level1_spec1.R", "2_pmm_level2_spec1.R", "3_pmm_level3_spec1.R",
-                     "4_pmm_level1_spec2.R", "5_pmm_level2_spec2.R", "6_pmm_level3_spec2.R")
-num_cores <- detectCores()
-cl <- makeCluster(num_cores)
-registerDoParallel(cl)
-
-# Define the parameters
-missing_patterns <- c("50mar", "50mnar", "70mar", 
-  "70mnar", "90mar", "90mnar"
-                      )
-
-data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list", "simdata_miss_70mar_list", 
-                   "simdata_miss_70mnar_list","simdata_miss_90mar_list", "simdata_miss_90mnar_list"
-                   )
-
-# Loop through each dataset name, using get() to access the dataset directly
-for (i in seq_along(missing_patterns)) {
-  data_list <- get(data_lists_names[i])
-  process_simulation_data_parallel_r(paste0("miss_", missing_patterns[i]), data_list)
-  gc()  # Call garbage collector to free up memory
-}
-for (pattern in missing_patterns) {
-  print(pattern)
-  combine_rda_files_parallel_r(file.path(work_dir, paste0("miss_", pattern)))
-  }
-stopCluster(cl)
+# source_files <- list("1_pmm_level1_spec1.R", "2_pmm_level2_spec1.R", "3_pmm_level3_spec1.R",
+#                      "4_pmm_level1_spec2.R", "5_pmm_level2_spec2.R", "6_pmm_level3_spec2.R")
+# num_cores <- detectCores()
+# cl <- makeCluster(num_cores)
+# registerDoParallel(cl)
+# 
+# # Define the parameters
+# missing_patterns <- c("50mar", "50mnar", "70mar", "70mnar", "90mar", "90mnar")
+# 
+# data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list",
+#                    "simdata_miss_70mar_list", "simdata_miss_70mnar_list",
+#                    "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
+# 
+# # Loop through each dataset name, using get() to access the dataset directly
+# for (i in seq_along(missing_patterns)) { 
+#   data_list <- get(data_lists_names[i])
+#   process_simulation_data_parallel_r(paste0("miss_", missing_patterns[i]), data_list)
+#   gc()  # Call garbage collector to free up memory
+# }
+# for (pattern in missing_patterns) {
+#   print(pattern)
+#   combine_rda_files_parallel_r(file.path(work_dir, paste0("miss_", pattern)))
+#   }
+# stopCluster(cl)
 
 ############################################
 ############################################

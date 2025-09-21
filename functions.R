@@ -31,10 +31,10 @@ sim_miss <- function(data, vars, miss_perc) {
   data <- as.data.frame(data)
   
   logistic_model <- glm(source ~ ., 
-                     data = data[, c(vars)], 
-                     family = binomial)
-  predicted <- 1 - predict(logistic_model, type = "response") # probability of being "not missing" category (NHANES)
-    
+                        data = data[, c(vars)], 
+                        family = binomial)
+  predicted <- predict(logistic_model, type = "response") # probability of being "not missing" category (NHANES)
+  
   data[[paste0("miss_indicator")]] <- as.numeric(ifelse(predicted > quantile(predicted, miss_perc/100), TRUE, FALSE))
   return(data)
 }
@@ -47,7 +47,7 @@ introduce_missingness <- function(df, cols_to_make_missing, predictors, missing_
   logit_model <- glm(formula, data = df, family = binomial(link = "logit"))
   
   # Calculate the probability of missingness for each row. (prob of being in NHANES (not missing))
-  df$prob_missing <- 1 - predict(logit_model, type = "response")
+  df$prob_missing <- predict(logit_model, type = "response")
   
   # Adjust the predicted probabilities to meet the desired overall missing rate.
   df$adjusted_prob_missing <- df$prob_missing * (missing_rate / mean(df$prob_missing))
@@ -240,12 +240,12 @@ rubin_combining_rule_continuous <- function(variable, benchmark, scenario) {
     combined_data[[variable]] <- combined_data[[variable_sqrt]]^2
   }
   m <- length(unique(combined_data$`MULT_`))
-
+  
   estimates_mlevel<-combined_data %>% #each imputed data
     group_by(MULT_) %>%
     summarize(value = mean(get(variable))) 
   estimate_mi<- mean(estimates_mlevel$value) # pooled estimate from MI
-
+  
   # Calculate the within-imputation variance (mean variance within each group)
   within_variance<-combined_data %>% #each imputed data
     group_by(MULT_) %>%
@@ -266,7 +266,9 @@ rubin_combining_rule_continuous <- function(variable, benchmark, scenario) {
   
   df <- (m-1)/lambda^2
   t_value <- qt(0.975, df)
-  cr <- as.numeric((benchmark >= estimate_mi- t_value * sqrt(mi_vt)) & (benchmark <= estimate_mi + t_value * sqrt(mi_vt)))
+  lower = estimate_mi - t_value * sqrt(mi_vt)
+  upper = estimate_mi + t_value * sqrt(mi_vt)
+  coverage <- as.numeric((benchmark >= lower) & (benchmark <= upper))
   
   # Append results to result_sheet
   result_sheet_eachrun <<- rbind(result_sheet_eachrun, data.frame(
@@ -279,7 +281,10 @@ rubin_combining_rule_continuous <- function(variable, benchmark, scenario) {
     bias = bias,
     relative_bias = relative_bias,
     df = df,
-    cr = cr,
+    t_value = t_value,
+    lower = lower,
+    upper = upper,
+    coverage = coverage,
     lambda = lambda
   ))
 }
@@ -329,8 +334,10 @@ rubin_combining_rule_categorical <- function(variable, benchmarks, scenario) {
     relative_bias <- bias/benchmarks[[i]]
     
     df <- (m-1)/lambda^2
-    t_value <- qt(0.95, df)
-    cr <- as.numeric((benchmarks[[i]] >= estimate_mi- t_value * sqrt(mi_vt)) & (benchmarks[[i]] <= estimate_mi + t_value * sqrt(mi_vt)))
+    t_value <- qt(0.975, df)
+    lower = estimate_mi - t_value * sqrt(mi_vt)
+    upper = estimate_mi + t_value * sqrt(mi_vt)
+    coverage <- as.numeric((benchmarks[[i]] >= lower) & (benchmarks[[i]] <= upper))
     
     # Append results to result_sheet
     result_sheet_eachrun <<- rbind(result_sheet_eachrun, data.frame(
@@ -343,11 +350,96 @@ rubin_combining_rule_categorical <- function(variable, benchmarks, scenario) {
       bias = bias,
       relative_bias = relative_bias,
       df = df,
-      cr = cr,
+      t_value = t_value,
+      lower = lower,
+      upper = upper,
+      coverage = coverage,
       lambda = lambda
     ))
   }
 }
+
+
+rubin_combining_rule_categorical_transformation <- function(variable, benchmarks, scenario) {
+  # Load the combined data
+  load('combined_data.rda')
+  
+  # Create dummy variables
+  df_dummies <- dummy_cols(combined_data, select_columns = variable)
+  
+  # Define activity pattern columns
+  activity_cols <- c("activity_pattern_1", "activity_pattern_2", "activity_pattern_3", "activity_pattern_4")
+  
+  # Ensure all activity columns are present
+  for (col in activity_cols) {
+    if (!col %in% colnames(df_dummies)) {
+      df_dummies[[col]] <- 0
+    }
+  }
+  m <- length(unique(df_dummies$`MULT_`))
+  
+  # Loop over the first four columns of interest
+  for (i in 1:4) {
+    # Calculate the estimate (mean) for each imputation
+    p_l <- df_dummies %>%
+      group_by(MULT_) %>%
+      summarise(p_l = mean(.data[[activity_cols[[i]]]]))
+    
+    # Log-transformed proportion (t_l)
+    p_l$t_l <- log(p_l$p_l / (1 - p_l$p_l))
+    
+    # Calculate the variance for each imputation (v_l)
+    p_l$v_l <- 1 / (length(df_dummies[[activity_cols[[i]]]])/m * p_l$p_l * (1 - p_l$p_l))
+    
+    # Apply Rubin's rule: Pooled estimate (estimate_mi)
+    estimate_mi_logit <- mean(p_l$t_l)  # Pooled estimate for proportions
+    
+    # Within-imputation variance (mi_vw) (average variance within imputations)
+    mi_vw_logit <- mean(p_l$v_l)
+    
+    # Between-imputation variance (mi_vb) (variance of the estimates)
+    mi_vb_logit <- var(p_l$t_l)
+    
+    # Total variance (T)
+    mi_vt_logit <- mi_vw_logit + (1 + 1/m) * mi_vb_logit
+    
+    # Fraction of Missing Information (lambda)
+    lambda_logit <- (1 + 1/m) * mi_vb_logit / mi_vt_logit
+    
+    df_logit <- (m-1)/lambda_logit^2
+    t_value_logit <- qt(0.975, df_logit)
+    lower_logit <- estimate_mi_logit - t_value_logit * sqrt(mi_vt_logit)
+    upper_logit <- estimate_mi_logit + t_value_logit * sqrt(mi_vt_logit)
+    lower <- 1 / (1 + exp(-lower_logit))
+    upper <- 1 / (1 + exp(-upper_logit))
+    
+    coverage <- as.numeric((benchmarks[[i]] >= lower) & (benchmarks[[i]] <= upper))
+    
+    # inverse logit 
+    estimate_mi <- 1 / (1 + exp(-estimate_mi_logit))
+    bias <- estimate_mi - benchmarks[[i]]
+    relative_bias <- bias/benchmarks[[i]]
+    
+    # Append results to result_sheet
+    result_sheet_eachrun <<- rbind(result_sheet_eachrun, data.frame(
+      scenario = scenario,
+      variable = activity_cols[[i]],
+      estimate_mi = estimate_mi,
+      mi_vw = 1 / (1 + exp(-mi_vw_logit)),
+      mi_vb = 1 / (1 + exp(-mi_vb_logit)),
+      mi_vt = 1 / (1 + exp(-mi_vt_logit)),
+      bias = bias,
+      relative_bias = relative_bias,
+      df = df_logit,
+      t_value = t_value_logit,
+      lower = lower,
+      upper = upper,
+      coverage = coverage,
+      lambda = 1 / (1 + exp(-lambda_logit))
+    ))
+  }
+}
+
 
 # Main function to loop through directories and apply the Rubin combining rule
 process_folders_continuous <- function(work_dir, variable, benchmark) {
@@ -390,7 +482,7 @@ process_folders_categorical <- function(work_dir, variable, benchmarks) {
       scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")
       scenario <- gsub("/", "_", scenario)
       # Call Rubin combining rule function
-      rubin_combining_rule_categorical(variable, benchmarks, scenario)
+      rubin_combining_rule_categorical_transformation(variable, benchmarks, scenario)
     }
   }
   
@@ -406,13 +498,13 @@ process_folders_categorical <- function(work_dir, variable, benchmarks) {
 
 
 impute_global_r <- function(dataset, source_file) {
-    # Copy the source file to the directory
+  # Copy the source file to the directory
   file.copy(paste0(work_dir, "/", basename(source_file)), getwd(), overwrite = TRUE)
-    # prepare the observed data
+  # prepare the observed data
   write_csv(dataset, "observed.csv") 
   observed <- read_csv("observed.csv")
   save(observed, file="observed.rda")
-    # Perform the imputation
+  # Perform the imputation
   source(source_file)
 }
 
@@ -522,103 +614,59 @@ process_simulation_data_parallel_r <- function(miss_type, simdata_list) {
 
 
 
-compute_accuracy_for_subfolder <- function(subfolder) {
-  # Extract scenario name from folder path
-  scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")
-  scenario <- gsub("/", "_", scenario)
-  run_num <- as.numeric(str_extract(scenario, "(?<=run_)\\d+"))
+compute_accuracy_for_subfolder <- function(subfolder) {   
+  scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")   
+  scenario <- gsub("/", "_", scenario)   
+  run_num <- as.numeric(str_extract(scenario, "(?<=run_)\\d+"))      
   
-  # Load the combined data (use full path instead of changing working directory)
-  load(file.path(subfolder, 'combined_data.rda')) # Load the combined data
+  load(file.path(subfolder, 'combined_data.rda')) # Load the combined data      
   
-  observed <- sampled_datasets[[run_num]]  # Access the appropriate observed dataset
-  observed <- observed[order(observed$seqn), ]
-  accuracy_results <- numeric(0)  # Store accuracy results for the current subfolder
-  f1_score_results <- numeric(0)
-  for (i in 1:5) {
-    combined_subset <- subset(combined_data, MULT_ == i)
-    combined_subset <- combined_subset[order(combined_subset$seqn), ]
-    # Check if row counts match
-    if (nrow(observed) == nrow(combined_subset)) {
-      observed$activity_pattern <- as.factor(observed$activity_pattern)
-      combined_subset$activity_pattern <- as.factor(combined_subset$activity_pattern)
+  observed <- sampled_datasets[[run_num]]  # Access the appropriate observed dataset   
+  observed <- observed[order(observed$seqn), ]   
+  accuracy_results <- numeric(0)  # Store accuracy results for the current subfolder   
+  
+  for (i in 1:5) {     
+    combined_subset <- subset(combined_data, MULT_ == i)     
+    combined_subset <- combined_subset[order(combined_subset$seqn), ]     
+    
+    # Debugging checks
+    print(paste("Processing MULT_ =", i))
+    print(paste("Observed rows:", nrow(observed), "Combined rows:", nrow(combined_subset)))
+    
+    if (nrow(observed) == nrow(combined_subset)) {       
+      # Convert haven_labelled to factor
+      library(haven)
+      observed$activity_pattern <- as_factor(observed$activity_pattern)
+      combined_subset$activity_pattern <- as_factor(combined_subset$activity_pattern)
       
-      # Add missing levels from observed to combined_subset
-      combined_subset$activity_pattern <- factor(combined_subset$activity_pattern,
-                                                 levels = levels(observed$activity_pattern))
+      # Align factor levels
+      combined_subset$activity_pattern <- factor(
+        combined_subset$activity_pattern, 
+        levels = levels(observed$activity_pattern)
+      )
       
-      # Replace missing predictions with 0 counts (optional, depending on how confusionMatrix handles it)
-      combined_subset$activity_pattern[is.na(combined_subset$activity_pattern)] <- levels(observed$activity_pattern)[which(is.na(table(combined_subset$activity_pattern)))]
+      # Check NA counts
+      print(paste("NA in combined_subset activity_pattern:", sum(is.na(combined_subset$activity_pattern))))
       
-      # Now run the confusionMatrix
+      # Run confusionMatrix
       confusion_matrix <- confusionMatrix(
-        observed$activity_pattern,
+        observed$activity_pattern, 
         combined_subset$activity_pattern
       )
-      accuracy <- confusion_matrix$overall['Accuracy']
-      # Store the accuracy result
-      accuracy_results <- c(accuracy_results, accuracy)
-      precision <- confusion_matrix$byClass[, "Pos Pred Value"]  # Precision per class
-      recall <- confusion_matrix$byClass[, "Sensitivity"]        # Recall per class
-      f1_score_scores <- 2 * (precision * recall) / (precision + recall)
-      support <- table(observed$activity_pattern)
-      weighted_f1_score <- sum(f1_score_scores * (support / sum(support)))
-      f1_score_results <- c(f1_score_results, weighted_f1_score)
+      print(confusion_matrix)
+      
+      accuracy <- confusion_matrix$overall['Accuracy']       
+      accuracy_results <- c(accuracy_results, accuracy)     
+    } else {
+      print("Row counts do not match! Skipping MULT_ =", i)
     }
-  }
+  }      
   
-  # Calculate and return the mean accuracy for the current subfolder
-  mean_accuracy <- mean(accuracy_results)
-  mean_f1_score <- mean(f1_score_results)
-  return(data.frame(
-    scenario = scenario,
-    accuracy = mean_accuracy,
-    f1_score = mean_f1_score
-  ))
+  mean_accuracy <- mean(accuracy_results, na.rm = TRUE)   
+  return(data.frame(scenario = scenario, accuracy = mean_accuracy)) 
 }
 
 
-
-logreg_for_subfolder <- function(subfolder) {
-  # Extract scenario name from folder path
-  scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")
-  scenario <- gsub("/", "_", scenario)
-  run_num <- as.numeric(str_extract(scenario, "(?<=run_)\\d+"))
-  
-  # Load the combined data
-  load(file.path(subfolder, 'combined_data.rda')) 
-  
-  # Initialize vectors to store results
-  auc_values <- numeric(5)
-  R_squared_values <- numeric(5)
-  
-  # Loop through subsets
-  for (i in 1:5) {
-    combined_subset <- subset(combined_data, MULT_ == i)
-    combined_subset <- combined_subset[order(combined_subset$seqn), ]
-    combined_subset$mvpa_total <- combined_subset$modpa_total + combined_subset$vigpa_total
-    
-    # Model 2
-    model <- glm(hypertension ~ as.factor(gender) + age + as.factor(race) + as.factor(edu) + mvpa_total_acc + as.factor(activity_pattern), 
-                  data = combined_subset, 
-                  family = binomial(link = 'probit'))
-    
-    # Calculate AUC and R-squared for Model 2
-    auc_values[i] <- roc(combined_subset$hypertension, predict(model, combined_subset, type = "response"))$auc
-    R_squared_values[i] <- as.numeric(pR2(model)[4])
-  }
-  
-  # Calculate means for AUC and R-squared values
-  mean_auc <- mean(auc_values, na.rm = TRUE)
-  mean_R_squared <- mean(R_squared_values, na.rm = TRUE)
-  
-  # Return the results as a data frame
-  return(data.frame(
-    scenario = scenario,
-    mean_auc = mean_auc,
-    mean_R_squared = mean_R_squared
-  ))
-}
 
 
 
@@ -642,4 +690,219 @@ perform_kproto_clustering <- function(df, k) {
   df$cluster <- kmode$cluster
   
   return(df)
+}
+
+
+calculate_ci_with_custom_variance <- function(data_list, variable, alpha = 0.05) {
+  ci_results <- lapply(seq_along(data_list), function(i) {
+    dataset <- data_list[[i]]
+    
+    if (variable %in% colnames(dataset)) {
+      # Select variance calculation method based on the variable name
+      if (variable == "mvpa_total_acc") {
+        variance <- calculate_squared_se(dataset[[variable]])
+      } else {
+        variance <- calculate_squared_se_prop(dataset[[variable]])
+      }
+      
+      # Calculate mean and standard error
+      mean_val <- mean(dataset[[variable]])
+      se <- sqrt(variance)  
+      
+      # Calculate sample size
+      n <- sum(!is.na(dataset[[variable]]))
+      
+      # Confidence interval
+      ci <- c(
+        run = i,
+        lower = mean_val - qt(1 - alpha / 2, df = n - 1) * se,
+        upper = mean_val + qt(1 - alpha / 2, df = n - 1) * se
+      )
+    } else {
+      # If variable doesn't exist in the dataset, return NA
+      ci <- c(run = i, lower = NA, upper = NA)
+    }
+    
+    return(ci)
+  })
+  
+  # Combine results into a data frame
+  ci_df <- do.call(rbind, ci_results)
+  ci_df <- as.data.frame(ci_df)
+  ci_df$variable = variable
+  colnames(ci_df) <- c("run", "lower", "upper", "variable")
+  
+  return(ci_df)
+}
+
+logreg_for_subfolder <- function(subfolder, outcome_var) {
+  # Extract scenario name from folder path
+  scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")
+  scenario <- gsub("/", "_", scenario)
+  run_num <- as.numeric(str_extract(scenario, "(?<=run_)\\d+"))
+  scenario_end <- str_sub(scenario, -1)
+
+  # Load the combined data
+  load(file.path(subfolder, 'combined_data.rda')) 
+  
+  if (scenario_end %in% c("1", "2", "3")) {
+    combined_data$mvpa_total_acc <- combined_data$mvpa_total_acc_sqrt^2
+  }
+  # Initialize vectors to store results
+  prauc_values <- numeric(5)
+  pseudo_R2_values <- numeric(5)
+  deviance_values <- numeric(5)
+  aic_values <- numeric(5)
+  bic_values <- numeric(5)
+  
+  for (i in 1:5) {
+    combined_subset <- subset(combined_data, MULT_ == i)
+    combined_subset <- combined_subset[order(combined_subset$seqn), ]
+    combined_subset$mvpa_total <- combined_subset$modpa_total + combined_subset$vigpa_total
+    
+    # Create model formulas dynamically
+    formula0 <- as.formula(paste(outcome_var, "~ age + as.factor(race) + bmi + mvpa_total"))
+    formula1 <- as.formula(paste(outcome_var, "~ age + as.factor(race) + bmi + mvpa_total_acc + as.factor(activity_pattern)"))
+    
+    model0 <- glm(formula0, data = combined_subset, family = binomial(link = 'probit'))
+    model <- glm(formula1, data = combined_subset, family = binomial(link = 'probit'))
+    
+    # Prediction probabilities for PR curve
+    preds <- predict(model, combined_subset, type = "response")
+    labels <- combined_subset[[outcome_var]]
+    
+    # PRAUC
+    pr <- pr.curve(scores.class0 = preds[labels == 1],
+                   scores.class1 = preds[labels == 0],
+                   curve = FALSE)
+    prauc_values[i] <- pr$auc.integral
+    
+    # Pseudo R2 (McFadden)
+    pseudo_R2_values[i] <- as.numeric(pR2(model)["McFadden"])
+    
+    # Deviance, AIC, BIC
+    deviance_values[i] <- deviance(model)
+    aic_values[i] <- AIC(model)
+    bic_values[i] <- BIC(model)
+  }
+  
+  # Calculate mean metrics
+  return(data.frame(
+    scenario = scenario,
+    mean_pr_auc = mean(prauc_values, na.rm = TRUE),
+    mean_pseudo_R2 = mean(pseudo_R2_values, na.rm = TRUE),
+    mean_deviance = mean(deviance_values, na.rm = TRUE),
+    mean_AIC = mean(aic_values, na.rm = TRUE),
+    mean_BIC = mean(bic_values, na.rm = TRUE)
+  ))
+}
+
+logreg_sampledata <- function(sampled_datasets, outcome_var) {
+  # Initialize result storage
+  results_list <- vector("list", length(sampled_datasets))
+  
+  for (i in seq_along(sampled_datasets)) {
+    tryCatch({
+      data_i <- sampled_datasets[[i]]
+      
+      # Dynamically calculate outcome and predictors
+      data_i$mvpa_total <- data_i$modpa_total + data_i$vigpa_total
+      outcome <- data_i[[outcome_var]]
+      
+      # Fit logistic regression model (Probit link)
+      model <- glm(
+        formula = as.formula(paste(outcome_var, "~ age + as.factor(race) + bmi + mvpa_total")),
+        data = data_i,
+        family = binomial(link = 'probit')
+      )
+      
+      # Predictions for metrics
+      preds <- predict(model, data_i, type = "response")
+      
+      # Calculate PR AUC (Precision-Recall AUC) using PRROC package
+      pr <- PRROC::pr.curve(scores.class0 = preds[outcome == 1], 
+                            scores.class1 = preds[outcome == 0], 
+                            curve = FALSE)
+      pr_auc <- pr$auc.integral
+      
+      # Calculate pseudo R²
+      pseudo_R2 <- as.numeric(pscl::pR2(model)[4])
+      
+      # Model evaluation metrics
+      deviance_val <- model$deviance
+      aic_val <- AIC(model)
+      bic_val <- BIC(model)
+      
+      # Store results
+      results_list[[i]] <- data.frame(
+        mean_pr_auc = pr_auc,
+        mean_pseudo_R2 = pseudo_R2,
+        mean_deviance = deviance_val,
+        mean_AIC = aic_val,
+        mean_BIC = bic_val
+      )
+    }, error = function(e) {
+      # In case of error, store NAs
+      results_list[[i]] <- data.frame(
+        mean_pr_auc = NA,
+        mean_pseudo_R2 = NA,
+        mean_deviance = NA,
+        mean_AIC = NA,
+        mean_BIC = NA
+      )
+    })
+  }
+  
+  # Combine results into a final dataframe
+  results <- do.call(rbind, results_list)
+  
+  return(results)
+}
+
+process_model <- function(dataset) {
+  # Define the models
+  model1 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital, data = dataset)
+  )
+  
+  model2 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset)
+  )
+  
+  model3 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance +
+         self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+         fitness_access + health_literacy, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance +
+               self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+               fitness_access + health_literacy, data = dataset)
+  )
+  
+  # Collect the results for each model
+  model_results <- data.frame(
+    model = rep(1:3, each = 2),  # 1, 2, and 3 for each model
+    variable = rep(c("mvpa_total_acc_sqrt", "activity_pattern"), 3),
+    rsquared = c(
+      summary(model1[[1]])$adj.r.squared, pR2(model1[[2]])["r2ML"],
+      summary(model2[[1]])$r.squared, pR2(model2[[2]])["r2ML"],
+      summary(model3[[1]])$r.squared, pR2(model3[[2]])["r2ML"]
+    ),
+    dataset_id = rep(deparse(substitute(dataset)), 6)  # Add dataset name to identify it
+  )
+  
+  return(model_results)
 }
