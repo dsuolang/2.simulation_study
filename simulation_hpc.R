@@ -5,7 +5,7 @@
 #  Model misspecification. 
 #  Modeling approach 
 #  Total scenarios = 36(2 * 3 * 3 * 2) * + 18(2 * 3 * 3 * 1) = 54
-#  Last updated 5/18/2025
+#  Last updated 12/15/2024
 
 ############################################
 #--------SRMI--------#
@@ -35,7 +35,6 @@ library(tidyverse)
 library(devtools)
 library(foreign)
 library(nnet)
-library(mice)
 library(pscl)
 library(doParallel)
 library(readr)
@@ -43,6 +42,7 @@ library(stringr)
 library(fastDummies)
 library(vcd)
 library(magrittr)
+library(mice)
 library(caret) 
 library(pscl)
 library(clustMixType)
@@ -163,14 +163,14 @@ names(sampled_datasets) <- paste0("dataset_", 1:n_datasets)
 length(sampled_datasets)
 
 # check normality of complete data distribution
-means<-sapply(sampled_datasets, function(dataset) {
-  sum(dataset$activity_pattern == 1, na.rm=T)/nrow(dataset)
-})
-
-hist(means)
-qqnorm(means)
-qqline(means, col='red')
-shapiro.test(means)
+# means<-sapply(sampled_datasets, function(dataset) {
+#   sum(dataset$activity_pattern == 1, na.rm=T)/nrow(dataset)
+# })
+# 
+# hist(means)
+# qqnorm(means)
+# qqline(means, col='red')
+# shapiro.test(means)
 #save.image(file = file.path(work_dir, ".RData"))
 
 #--------Evaluate R-squared values with varying predictors--------#
@@ -230,6 +230,55 @@ print(paste("McFadden's pseudo-R-squared for multinomial model3:",  pR2(model3[[
 # vif(model)
 # Initialize an empty list to store results
 # Load the necessary library
+
+# Define the function to apply to each dataset
+process_model <- function(dataset) {
+  # Define the models
+  model1 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital, data = dataset)
+  )
+  
+  model2 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator  + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset)
+  )
+  
+  model3 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance +
+         self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+         fitness_access + health_literacy, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + modpa_indicator + vigpa_indicator + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance +
+               self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+               fitness_access + health_literacy, data = dataset)
+  )
+  
+  # Collect the results for each model
+  model_results <- data.frame(
+    model = rep(1:3, each = 2),  # 1, 2, and 3 for each model
+    variable = rep(c("mvpa_total_acc_sqrt", "activity_pattern"), 3),
+    rsquared = c(
+      summary(model1[[1]])$adj.r.squared, pR2(model1[[2]])["r2ML"],
+      summary(model2[[1]])$r.squared, pR2(model2[[2]])["r2ML"],
+      summary(model3[[1]])$r.squared, pR2(model3[[2]])["r2ML"]
+    ),
+    dataset_id = rep(deparse(substitute(dataset)), 6)  # Add dataset name to identify it
+  )
+  
+  return(model_results)
+}
 
 
 model_results_list <- lapply(sampled_datasets, process_model)
@@ -318,14 +367,10 @@ cl <- makeCluster(num_cores)
 registerDoParallel(cl)
 #
 # # Define the parameters
-missing_patterns <- c("50mar"#, "50mnar", "70mar", "70mnar", "90mar", "90mnar"
-                      )
-
-data_lists_names <- c("simdata_miss_50mar_list"
-                      #, "simdata_miss_50mnar_list",
-                      #"simdata_miss_70mar_list", "simdata_miss_70mnar_list",
-                      #"simdata_miss_90mar_list", "simdata_miss_90mnar_list"
-                      )
+missing_patterns <- c("50mar", "50mnar", "70mar", "70mnar", "90mar", "90mnar")
+data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list",
+                      "simdata_miss_70mar_list", "simdata_miss_70mnar_list",
+                      "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
 
 for (i in seq_along(missing_patterns)) {   # change test
   data_list <- get(data_lists_names[i])
@@ -350,32 +395,30 @@ stopCluster(cl)
 #--------PMM imputation--------#
 ############################################
 ############################################
-source_files <- list("1_pmm_level1_spec1.R", "2_pmm_level2_spec1.R", "3_pmm_level3_spec1.R",
-                     "4_pmm_level1_spec2.R", "5_pmm_level2_spec2.R", "6_pmm_level3_spec2.R")
-num_cores <- detectCores()
-cl <- makeCluster(num_cores)
-registerDoParallel(cl)
-
-# Define the parameters
-missing_patterns <- c("50mar", "50mnar", "70mar", 
-  "70mnar", "90mar", "90mnar"
-                      )
-
-data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list", "simdata_miss_70mar_list", 
-                   "simdata_miss_70mnar_list","simdata_miss_90mar_list", "simdata_miss_90mnar_list"
-                   )
-
-# Loop through each dataset name, using get() to access the dataset directly
-for (i in seq_along(missing_patterns)) {
-  data_list <- get(data_lists_names[i])
-  process_simulation_data_parallel_r(paste0("miss_", missing_patterns[i]), data_list)
-  gc()  # Call garbage collector to free up memory
-}
-for (pattern in missing_patterns) {
-  print(pattern)
-  combine_rda_files_parallel_r(file.path(work_dir, paste0("miss_", pattern)))
-  }
-stopCluster(cl)
+# source_files <- list("1_pmm_level1_spec1.R", "2_pmm_level2_spec1.R", "3_pmm_level3_spec1.R",
+#                      "4_pmm_level1_spec2.R", "5_pmm_level2_spec2.R", "6_pmm_level3_spec2.R")
+# num_cores <- detectCores()
+# cl <- makeCluster(num_cores)
+# registerDoParallel(cl)
+# 
+# # Define the parameters
+# missing_patterns <- c("50mar", "50mnar", "70mar", "70mnar", "90mar", "90mnar")
+# 
+# data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list",
+#                    "simdata_miss_70mar_list", "simdata_miss_70mnar_list",
+#                    "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
+# 
+# # Loop through each dataset name, using get() to access the dataset directly
+# for (i in seq_along(missing_patterns)) { 
+#   data_list <- get(data_lists_names[i])
+#   process_simulation_data_parallel_r(paste0("miss_", missing_patterns[i]), data_list)
+#   gc()  # Call garbage collector to free up memory
+# }
+# for (pattern in missing_patterns) {
+#   print(pattern)
+#   combine_rda_files_parallel_r(file.path(work_dir, paste0("miss_", pattern)))
+#   }
+# stopCluster(cl)
 
 ############################################
 ############################################
@@ -584,95 +627,91 @@ write_csv(accuracy_df, paste0(work_dir, '/accuracy_df.csv'))
 
 
 #-------Logistic regression--------
-# Set the outcome variable (change this as needed)
-# Self-report
-results<-logreg_sampledata(sampled_datasets, outcome_var)
-summary(results)
-
-# mean_pr_auc     mean_pseudo_R2   mean_deviance      mean_AIC        mean_BIC 
-# Mean   :0.6302   Mean   :0.2118   Mean   : 9770   Mean   : 9784   Mean   : 9835   Hypertension
-# Mean   :0.3091   Mean   :0.1707   Mean   :5691   Mean   :5705   Mean   :5756   Diabetes
-# Mean   :0.2923   Mean   :0.1351   Mean   :5974   Mean   :5988   Mean   :6038  Heart diesease
-
-outcome_var <- "heartdiseases"  # e.g., "diabetes", "hypertension", "heartdiseases"  etc.
-
 folders <- list.dirs(work_dir, full.names = TRUE, recursive = FALSE)
 subfolders <- unlist(lapply(folders, list.dirs, full.names = TRUE, recursive = FALSE))
-length(subfolders)
-batch_size <- 9000  # you can change this
-total_batches <- 1  # or however many you want
 
-# New structure to match updated output
+
+batch_size <- 600 # Process 600 subfolders per batch
+total_batches <- ceiling(length(subfolders) / batch_size)
+
+# Initialize the combined results dataframe
 log_eachrun_combined <- data.frame(
   scenario = character(),
-  mean_pr_auc = numeric(),
-  mean_pseudo_R2 = numeric(),
-  mean_deviance = numeric(),
-  mean_AIC = numeric(),
-  mean_BIC = numeric(),
+  mean_auc = numeric(),
+  mean_R_squared = numeric(),
   stringsAsFactors = FALSE
 )
 
-# Process in batches
+
+# Process subfolders in batches
 for (batch_idx in seq_len(total_batches)) {
+  # Get the current batch of subfolders
   batch_start <- (batch_idx - 1) * batch_size + 1
   batch_end <- min(batch_idx * batch_size, length(subfolders))
   batch_subfolders <- subfolders[batch_start:batch_end]
   
+  # Print progress
   cat("Processing batch", batch_idx, "of", total_batches, "(", batch_start, "-", batch_end, ")\n")
   
-  # Parallel setup
-  num_cores <- detectCores() - 1
+  # Set up parallel backend
+  num_cores <- detectCores() - 1  # Reserve one core for the system
   cl <- makeCluster(num_cores)
   registerDoParallel(cl)
-  clusterExport(cl, c("work_dir", "logreg_for_subfolder", "outcome_var"))
   
+  # Export necessary variables and functions
+  clusterExport(cl, c("work_dir", "logreg_for_subfolder"))
+  
+  # Process the current batch in parallel
   log_eachrun <- foreach(
     subfolder = batch_subfolders,
     .combine = rbind,
-    .packages = c("stringr", "pscl", "PRROC")
+    .packages = c("stringr", "pscl", "pROC")
   ) %dopar% {
     tryCatch(
-      logreg_for_subfolder(subfolder, outcome_var = outcome_var),
+      logreg_for_subfolder(subfolder),
       error = function(e) {
-        data.frame(
-          scenario = subfolder,
-          mean_pr_auc = NA,
-          mean_pseudo_R2 = NA,
-          mean_deviance = NA,
-          mean_AIC = NA,
-          mean_BIC = NA
-        )
+        return(data.frame(scenario = subfolder, mean_auc = e$message, mean_R_squared = e$message))
       }
     )
   }
   
+  # Stop the cluster after processing the batch
   stopCluster(cl)
+  
+  # Append the batch results to the combined results
   log_eachrun_combined <- rbind(log_eachrun_combined, log_eachrun)
 }
 
-# Save raw batch results (dynamic filename)
-write_csv(log_eachrun_combined, file = paste0(work_dir, "/log_eachrun_", outcome_var, ".csv"))
+# Save the final combined results to a CSV file
+write_csv(log_eachrun_combined, file = paste0(work_dir, "/log_eachrun.csv"))
 
-# Clean & aggregate results
-log_eachrun <- read.csv(paste0(work_dir, "/log_eachrun_", outcome_var, ".csv"))
-log_eachrun <- log_eachrun %>%
-  mutate(across(c(mean_pr_auc, mean_pseudo_R2, mean_deviance, mean_AIC, mean_BIC), as.numeric)) %>%
-  drop_na()
-
+log_eachrun <- read.csv(paste0(work_dir, '/log_eachrun.csv'))
+log_eachrun$mean_auc<-as.numeric(log_eachrun$mean_auc)
+log_eachrun$mean_R_squared<-as.numeric(log_eachrun$mean_R_squared)
+log_eachrun<- log_eachrun[!is.na(log_eachrun$mean_auc), ]
+log_eachrun<- log_eachrun[!is.na(log_eachrun$mean_R_squared), ]
+# Modify the scenario to get the average run scenario
 log_eachrun <- log_eachrun %>%
   mutate(scenario_avg_run = str_replace(scenario, "_run_\\d+", ""))
 
+# Summarise the data
 log_result <- log_eachrun %>%
   group_by(scenario_avg_run) %>%
   summarise(
-    mean_pr_auc = mean(mean_pr_auc, na.rm = TRUE),
-    mean_pseudo_R2 = mean(mean_pseudo_R2, na.rm = TRUE),
-    mean_deviance = mean(mean_deviance, na.rm = TRUE),
-    mean_AIC = mean(mean_AIC, na.rm = TRUE),
-    mean_BIC = mean(mean_BIC, na.rm = TRUE)
+    mean_auc = mean(mean_auc, na.rm = TRUE), 
+    mean_R_squared = mean(mean_R_squared, na.rm = TRUE), 
   ) %>%
   ungroup()
 
-# Save aggregated result (dynamic filename)
-write_csv(log_result, paste0(work_dir, "/log_result_", outcome_var, ".csv"))
+# Write the summarized data to a CSV file
+write_csv(log_result, paste0(work_dir, '/log_result.csv'))
+
+
+
+
+# Benchmark from self-reports
+results<-logreg_sampledata(sampled_datasets)
+summary(results)
+# 0.8007 AUC 0.1707 Rsquared for diabetes.
+# 0.7697 AUC 0.1351 Rsquared for heartdiseases
+# 0.8043 AUC 0.2118 Rsquared for hypertension
