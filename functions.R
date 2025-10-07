@@ -33,28 +33,28 @@ sim_miss <- function(data, vars, miss_perc) {
   logistic_model <- glm(source ~ ., 
                         data = data[, c(vars)], 
                         family = binomial)
-  predicted <- 1 - predict(logistic_model, type = "response") # probability of being "not missing" category (NHANES)
+  predicted <- predict(logistic_model, type = "response") # probability of being "not missing" category (NHANES)
   
   data[[paste0("miss_indicator")]] <- as.numeric(ifelse(predicted > quantile(predicted, miss_perc/100), TRUE, FALSE))
   return(data)
 }
 
+
 introduce_missingness <- function(df, cols_to_make_missing, predictors, missing_rate) {
   # Include the source variable as the outcome.
   formula <- as.formula(paste("source", "~", paste(predictors, collapse = " + ")))
   
+  wts <- ifelse(df$source == 1, 1 / mean(df$source == 1), 1 / mean(df$source == 0))  # weight ~ 1/prevalence 
   # Generate a logistic regression model based on the predictors and source variable.
-  logit_model <- glm(formula, data = df, family = binomial(link = "logit"))
+  logit_model <- glm(formula, data = df, family = binomial(link = "logit"), weights = wts)
   
-  # Calculate the probability of missingness for each row. (prob of being in NHANES (not missing))
-  df$prob_missing <- 1 - predict(logit_model, type = "response")
+  # Calculate the probability of missingness for each row. (prob of being in NHIS)
+  df$prob_missing <- predict(logit_model, type = "response")
   
   # Adjust the predicted probabilities to meet the desired overall missing rate.
   df$adjusted_prob_missing <- df$prob_missing * (missing_rate / mean(df$prob_missing))
   df$adjusted_prob_missing <- pmin(pmax(df$adjusted_prob_missing, 0), 1)
-  
-  # Ensure reproducibility
-  set.seed(2024)
+
   # Generate a uniform random variable for each row.
   u_random <- runif(nrow(df))
   
@@ -116,7 +116,6 @@ process_simulation_data_parallel <- function(miss_type, simdata_list) {
   clusterExport(cl, varlist = c("impute_within_subgroup", "work_dir", "source_files"))
   
   clusterEvalQ(cl, {
-    #srclib <<- "/Library/srclib/R"  # CHANGE TEST
     srclib <<- "/nfs/turbo/isr-bwest1/sw/rhel8/srclib/0.3.1/R" # initialize srclib
     source(file.path(srclib, "init.R", fsep = .Platform$file.sep))
   })
@@ -857,4 +856,52 @@ logreg_sampledata <- function(sampled_datasets, outcome_var) {
   results <- do.call(rbind, results_list)
   
   return(results)
+}
+
+process_model <- function(dataset) {
+  # Define the models
+  model1 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total  + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital, data = dataset)
+  )
+  
+  model2 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total + activity_pattern 
+       + source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance + fitness_access, data = dataset)
+  )
+  
+  model3 <- list(
+    lm(mvpa_total_acc_sqrt ~ modpa_total + vigpa_total  + activity_pattern + 
+         source + srvy_yr +
+         age + race + gender + marital + edu + poverty + work + insurance +
+         self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+         fitness_access + health_literacy, data = dataset),
+    multinom(activity_pattern ~ modpa_total + vigpa_total + mvpa_total_acc_sqrt + 
+               source + srvy_yr +
+               age + race + gender + marital + edu + poverty + work + insurance +
+               self_reported_health + bmi + smoker + alcohol_cat + hypertension + diabetes + heartdiseases + cancers + stroke +
+               fitness_access + health_literacy, data = dataset)
+  )
+  
+  # Collect the results for each model
+  model_results <- data.frame(
+    model = rep(1:3, each = 2),  # 1, 2, and 3 for each model
+    variable = rep(c("mvpa_total_acc_sqrt", "activity_pattern"), 3),
+    rsquared = c(
+      summary(model1[[1]])$adj.r.squared, pR2(model1[[2]])["r2ML"],
+      summary(model2[[1]])$r.squared, pR2(model2[[2]])["r2ML"],
+      summary(model3[[1]])$r.squared, pR2(model3[[2]])["r2ML"]
+    ),
+    dataset_id = rep(deparse(substitute(dataset)), 6)  # Add dataset name to identify it
+  )
+  
+  return(model_results)
 }
