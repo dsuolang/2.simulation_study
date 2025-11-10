@@ -1,25 +1,10 @@
-# Via simulation, this study will examine the impacts of four key factors on imputation performance: 
+# Via simulation, this study will examine the impacts of 5 key factors on imputation performance: 
 #  Missing data mechanism
 #  Missing rate
 #  Amount of shared auxiliary variables
 #  Model misspecification. 
 #  Modeling approach 
 #  Total scenarios = 36(2 * 3 * 3 * 2) * + 18(2 * 3 * 3 * 1) = 54
-#  Last updated 9/24/2025
-
-############################################
-#--------SRMI--------#
-work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/srmi"
-############################################
-
-
-############################################
-#--------PMM--------#
-work_dir <- "/nfs/turbo/isr-bwest1/dsuolang/study2/pmm"
-############################################
-
-setwd(work_dir)
-
 
 
 #--------required packages--------#
@@ -46,12 +31,12 @@ library(clustMixType)
 library(pROC)
 options(scipen = 999)
 
-source("/nfs/turbo/isr-bwest1/dsuolang/study2/functions.R")
+source("functions.R")
 
 
 #--------Draw samples from a synthetic population--------#
 ############################################
-synthpop <- read_dta("/home/dsuolang/synthpop_sim1.dta") 
+synthpop <- read_dta("synthpop_sim1.dta") 
 synthpop[c("mvpa_total_acc_sqrt", "modpa_total_sqrt", "vigpa_total_sqrt")] <-
   sqrt(synthpop[c("mvpa_total_acc", "modpa_total", "vigpa_total")])
 # We only need sqrt transformed mvpa_total_acc, but we prepare all variables for potential use.
@@ -99,7 +84,6 @@ probabilities <- 1 / (1 + exp(-z1))
 synthpop$fitness_access<- as.character(cut(probabilities, breaks = quantile(probabilities, probs = seq(0, 1, length.out = 3)), labels = c("yes", "no"), include.lowest = TRUE))
 #table(synthpop$fitness_access)
 
-
 z2 <- 0 +
   0.3 * synthpop$mvpa_total_acc_scaled -       
   0.6 * synthpop$activity_pattern_2 -         
@@ -132,13 +116,9 @@ synthpop<- synthpop %>%
   select(all_of(variables))
 
 rm(z1, z2)
-save(synthpop, file="/nfs/turbo/isr-bwest1/dsuolang/study2/synthpop.rda")
+save(synthpop, file="synthpop.rda")
 
-
-
-
-load("/nfs/turbo/isr-bwest1/dsuolang/study2/synthpop.rda")
-
+load("synthpop.rda")
 summary(synthpop) # Ensure the variable type is correct
 set.seed(2024)
 n_samples <- 10000
@@ -161,6 +141,9 @@ length(sampled_datasets)
 # qqnorm(means)
 # qqline(means, col='red')
 # shapiro.test(means)
+
+
+
 
 #--------Evaluate R-squared values with varying predictors--------#
 ############################################
@@ -229,13 +212,14 @@ for (percent in percents) {
 
 gc()
 
-
 ############################################
 ############################################
 #--------SRMI imputation --------#
 ############################################
-############################################
-srclib <<- "/nfs/turbo/isr-bwest1/sw/rhel8/srclib/0.3.1/R" # initialize srclib
+work_dir <- paste0(getwd(), "/srmi")
+setwd(work_dir)
+############################################ Call IVEware from R, requires IVEware installation.
+srclib <<- "/nfs/turbo/isr-bwest1/sw/rhel8/srclib/0.3.1/R" # initialize srclib 
 source(file.path(srclib, "init.R", fsep=.Platform$file.sep))
 # List of source files
 source_files <- list("1_srmi_level1_spec1.set", "2_srmi_level2_spec1.set", "3_srmi_level3_spec1.set",
@@ -252,6 +236,7 @@ data_lists_names <- c("simdata_miss_50mar_list", "simdata_miss_50mnar_list",
                       "simdata_miss_70mar_list", "simdata_miss_70mnar_list",
                       "simdata_miss_90mar_list", "simdata_miss_90mnar_list")
 
+# Locate the function "process_simulation_data_parallel" and modify it to point to the specific directory where IVEware is installed.
 for (i in seq_along(missing_patterns)) {   
   data_list <- get(data_lists_names[i])
   process_simulation_data_parallel(paste0("miss_", missing_patterns[i]), data_list)
@@ -273,6 +258,8 @@ stopCluster(cl)
 #############################################
 ############################################
 #--------PMM imputation--------#
+work_dir <- paste0(getwd(), "/pmm")
+setwd(work_dir)
 ############################################
 ############################################
 source_files <- list("1_pmm_level1_spec1.R", "2_pmm_level2_spec1.R", "3_pmm_level3_spec1.R",
@@ -304,7 +291,12 @@ stopCluster(cl)
 
 gc()
 
-#-------- Combine Estimates --------#
+
+
+############################################
+# Perform the below analysis separately for files under for SRMI and PMM directory.
+############################################
+#-------- Combine Estimates --------# 
 ############################################
 # Best possible coverage rate
 sampled_datasets_dummy<-lapply(sampled_datasets, function(data){
@@ -339,6 +331,7 @@ summary_counts <- ci_complete_data %>%
   summarise(total_within_range = sum(coverage == 1)/n_datasets)
 
 
+
 #--------Bias, SE, RMSE, CR, FMI--------#
 #Initialize result sheet
 result_sheet_eachrun <- data.frame(
@@ -360,9 +353,9 @@ result_sheet_eachrun <- data.frame(
 )
 
 variable1 <- "mvpa_total_acc"
-benchmark <- 209.2866
+benchmark <- 209.2866 #based on the initial population data
 variable2 <- "activity_pattern"
-benchmarks <- c(0.1014771, 0.4302855, 0.3392789, 0.1289586)
+benchmarks <- c(0.1014771, 0.4302855, 0.3392789, 0.1289586) #based on the initial population data
 
 # Call the process_folders functions
 process_folders_continuous(work_dir, variable1, benchmark)
@@ -435,8 +428,7 @@ write_csv(result_sheet, paste0(work_dir, '/result_sheet.csv'))
 
 
 
-
-#--------Accuracy--------#
+#--------Accuracy (for activity patterns)--------#
 accuracy_df_eachrun_combined <- data.frame(
   scenario = character(),
   accuracy = numeric(),
@@ -446,7 +438,7 @@ accuracy_df_eachrun_combined <- data.frame(
 folders <- list.dirs(work_dir, full.names = TRUE, recursive = FALSE)
 subfolders <- unlist(lapply(folders, list.dirs, full.names = TRUE, recursive = FALSE))
 
-batch_size <- 600  # Process 600 subfolders per batch
+batch_size <- 600  # Process 600 subfolders per batch to make sure memory does not exhaust
 total_batches <- ceiling(length(subfolders) / batch_size)
 
 for (batch_idx in seq_len(total_batches)) {
@@ -510,7 +502,6 @@ write_csv(accuracy_df, paste0(work_dir, '/accuracy_df.csv'))
 # Self-report
 results<-logreg_sampledata(sampled_datasets, outcome_var)
 summary(results)
-
 # mean_pr_auc     mean_pseudo_R2   mean_deviance      mean_AIC        mean_BIC 
 # Mean   :0.6302   Mean   :0.2118   Mean   : 9770   Mean   : 9784   Mean   : 9835   Hypertension
 # Mean   :0.3091   Mean   :0.1707   Mean   :5691   Mean   :5705   Mean   :5756   Diabetes

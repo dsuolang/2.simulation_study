@@ -3,7 +3,7 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(tidyverse)
-#library(devtools)
+library(devtools)
 library(foreign)
 library(nnet)
 library(pscl)
@@ -20,7 +20,7 @@ library(clustMixType)
 library(pROC)
 options(scipen = 999)
 
-path <- "/Users/dsuolang/Desktop/Study2/Data/synthpop.dta"
+path <- "synthpop.dta"
 synthpop <- haven::read_dta(path)
 
 # Continuous variables

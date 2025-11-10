@@ -1,8 +1,8 @@
-#-------Define functions--------#
 calculate_squared_se <- function(variable) {
   squared_se <- (sd(variable) / sqrt(length(variable)))^2
   return(squared_se)
 }
+
 
 calculate_squared_se_prop <- function(variable) {
   p<-mean(variable)
@@ -10,7 +10,7 @@ calculate_squared_se_prop <- function(variable) {
   return(squared_se)
 }
 
-# Define the get_r_squared function
+
 create_binary_variables <- function(df) {
   binary_df <- data.frame(matrix(NA, nrow = nrow(df), ncol = 0))
   for (col in names(df)) {
@@ -23,20 +23,6 @@ create_binary_variables <- function(df) {
   }
   df <- cbind(df, binary_df)
   return(df)
-}
-
-# Function to generate missing data
-sim_miss <- function(data, vars, miss_perc) {
-  set.seed(2024)
-  data <- as.data.frame(data)
-  
-  logistic_model <- glm(source ~ ., 
-                        data = data[, c(vars)], 
-                        family = binomial)
-  predicted <- predict(logistic_model, type = "response") # probability of being "not missing" category (NHANES)
-  
-  data[[paste0("miss_indicator")]] <- as.numeric(ifelse(predicted > quantile(predicted, miss_perc/100), TRUE, FALSE))
-  return(data)
 }
 
 
@@ -70,6 +56,7 @@ introduce_missingness <- function(df, cols_to_make_missing, predictors, missing_
   df <- df %>% select(-prob_missing, -adjusted_prob_missing)
   return(df)
 }
+
 
 impute_within_subgroup <- function(dataset, source_file) {
   # Create directory for the dataset
@@ -114,9 +101,8 @@ process_simulation_data <- function(miss_type, simdata_list) {
 
 process_simulation_data_parallel <- function(miss_type, simdata_list) {
   clusterExport(cl, varlist = c("impute_within_subgroup", "work_dir", "source_files"))
-  
   clusterEvalQ(cl, {
-    srclib <<- "/nfs/turbo/isr-bwest1/sw/rhel8/srclib/0.3.1/R" # initialize srclib
+    srclib <<- "srclib/0.3.1/R" # initialize srclib, modify it to the specific lcoation where IVEware is installed
     source(file.path(srclib, "init.R", fsep = .Platform$file.sep))
   })
   
@@ -145,6 +131,7 @@ process_simulation_data_parallel <- function(miss_type, simdata_list) {
     message("Error: ", e$message)
   })
 }
+
 
 combine_rda_files <- function(work_dir) {
   # List all main folders in the directory
@@ -287,6 +274,7 @@ rubin_combining_rule_continuous <- function(variable, benchmark, scenario) {
     lambda = lambda
   ))
 }
+
 
 rubin_combining_rule_categorical <- function(variable, benchmarks, scenario) {
   # Load the combined data
@@ -490,12 +478,6 @@ process_folders_categorical <- function(work_dir, variable, benchmarks) {
 }
 
 
-
-
-
-
-
-
 impute_global_r <- function(dataset, source_file) {
   # Copy the source file to the directory
   file.copy(paste0(work_dir, "/", basename(source_file)), getwd(), overwrite = TRUE)
@@ -506,6 +488,7 @@ impute_global_r <- function(dataset, source_file) {
   # Perform the imputation
   source(source_file)
 }
+
 
 impute_within_subgroup_r <- function(dataset, source_file) {
   # Create directory for the dataset
@@ -534,6 +517,7 @@ impute_within_subgroup_r <- function(dataset, source_file) {
     source(source_file)
   }
 }
+
 
 combine_rda_files_parallel_r <- function(work_dir) {
   # List all main folders in the directory
@@ -612,7 +596,6 @@ process_simulation_data_parallel_r <- function(miss_type, simdata_list) {
 }
 
 
-
 compute_accuracy_for_subfolder <- function(subfolder) {   
   scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")   
   scenario <- gsub("/", "_", scenario)   
@@ -664,9 +647,6 @@ compute_accuracy_for_subfolder <- function(subfolder) {
   mean_accuracy <- mean(accuracy_results, na.rm = TRUE)   
   return(data.frame(scenario = scenario, accuracy = mean_accuracy)) 
 }
-
-
-
 
 
 perform_kproto_clustering <- function(df, k) {
@@ -734,6 +714,7 @@ calculate_ci_with_custom_variance <- function(data_list, variable, alpha = 0.05)
   return(ci_df)
 }
 
+
 logreg_for_subfolder <- function(subfolder, outcome_var) {
   # Extract scenario name from folder path
   scenario <- str_replace_all(subfolder, paste0(work_dir, "/"), "")
@@ -796,6 +777,7 @@ logreg_for_subfolder <- function(subfolder, outcome_var) {
   ))
 }
 
+
 logreg_sampledata <- function(sampled_datasets, outcome_var) {
   # Initialize result storage
   results_list <- vector("list", length(sampled_datasets))
@@ -857,6 +839,7 @@ logreg_sampledata <- function(sampled_datasets, outcome_var) {
   
   return(results)
 }
+
 
 process_model <- function(dataset) {
   # Define the models

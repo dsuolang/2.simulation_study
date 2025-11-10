@@ -1,3 +1,5 @@
+# This script produces the figures included in the paper.
+
 library(ggplot2)
 library(gridExtra)
 library(grid) 
@@ -10,8 +12,11 @@ library(tidyr)
 library(ggh4x) 
 library(cowplot)
 
-work_dir<-"/Users/dsuolang/Desktop/Study2/hpc_results"
+
+
 setwd(work_dir)
+
+
 
 srmi<- read.csv('result_sheet_srmi.csv')
 srmi$method = 'REG'
@@ -19,7 +24,6 @@ pmm <- read.csv('result_sheet_pmm.csv')
 pmm<-pmm[pmm$model_spec=="w/o_Transf",]
 pmm$method = 'PMM'
 srmi_pmm<-rbind(srmi, pmm)
-
 
 datasets <- list(
   srmi_pmm[srmi_pmm$variable == "mvpa_total_acc", ],
@@ -34,7 +38,7 @@ titles <- c("MVPA Duration (Wearable)",
             "Activity Pattern 3", "Activity Pattern 4")
 
 
-# Part 1. Rel_Bias SE RMSE for MVPA
+# 1. Rel_Bias SE RMSE for MVPA
 # Function to create plots for a given dataset
 create_plots <- function(data, title_text) {
   palette <- scale_color_manual(values = c("lightblue", "blue", "darkblue", "peachpuff", "orange", "orange3"))
@@ -125,7 +129,6 @@ create_plots <- function(data, title_text) {
 }
 
 # Generate and display plots
-#plot1 <- lapply(1:length(datasets), function(i) create_plots(datasets[[i]], titles[i]))
 plot1 <- create_plots(datasets[[1]], titles[[1]])
 plot1 
 grid.newpage()
@@ -151,7 +154,7 @@ ggsave(
 
 
 
-# Part 2. Bias,SE for activity pattern
+# 2. Bias,SE for activity pattern
 # Function to create plots for a given dataset
 create_plots2 <- function(data, title_text) {
   palette <- scale_color_manual(values = c("lightblue", "blue", "darkblue", "peachpuff", "orange", "orange3"))
@@ -260,7 +263,7 @@ final<-grid.arrange(
   legend_plot,             # your legend
   heights = c(9, 1)        # push legend to bottom (adjust ratio)
 )  
-# 1300 * 750
+
 ggsave(
   filename = "actpattern_bias_se.png",  # file extension determines format
   plot = final,                 # which plot to save
@@ -270,7 +273,8 @@ ggsave(
 )
 
 
-# Part 3 : FMI 
+
+# 3 : FMI 
 plot_fmi <- function(data, title_text) {
   palette <- scale_color_manual(values = c("orange3", "orange3", "orange3", "lightblue3", "lightblue3", "lightblue3"))
   # Create a new x_label column without breaking the text into separate lines
@@ -354,7 +358,7 @@ ggsave(
 )
 
 
-# Part 4: Log Models Analysis #800*500
+# 4: Log Models Analysis 
 
 # Load Data
 srmi <- read.csv('log_result_hypertension_srmi.csv')
@@ -400,8 +404,6 @@ logresult <- logresult[!(logresult$model_spec == "w/_Transf" & logresult$method 
 
 # Rename for clarity
 names(logresult)[names(logresult) == "scenario_avg_run"] <- "scenario"
-
-
 
 # Reshape Data to Long Format
 logresult_long <- logresult %>%
@@ -504,7 +506,7 @@ p
 
 
 
-# Part 3 : coverage
+# 5. Coverage
 plot_cr <- function(data, title_text, hline) {
   palette <- scale_color_manual(values = c("darkblue", "darkblue", "darkblue","lightblue3", "lightblue3", "lightblue3"))
   
@@ -653,15 +655,7 @@ print(final_summary)
 
 
 
-
-
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(ggplot2)
-
-# Assuming your data frame is called df
-
+# 5: Accuracy score
 df_clean <- srmi_pmm %>%
   mutate(
     miss_rate = str_extract(scenario_avg_run, "(?<=miss_)\\d+"),  # extract digits after 'miss_'
